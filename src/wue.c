@@ -64,6 +64,7 @@ char* CreateUnattendXml(int arch, int flags)
 	const static char* xml_arch_names[5] = { "x86", "amd64", "arm", "arm64" };
 	const static char* unallowed_account_names[] = { "Administrator", "Guest", "KRBTGT", "Local" };
 	static char path[MAX_PATH];
+	char* tzstr;
 	FILE* fd;
 	TIME_ZONE_INFORMATION tz_info;
 	int i, order;
@@ -152,6 +153,15 @@ char* CreateUnattendXml(int arch, int flags)
 				fprintf(fd, "        <ProtectYourPC>3</ProtectYourPC>\n");
 				fprintf(fd, "      </OOBE>\n");
 			}
+			if (flags & UNATTEND_DUPLICATE_LOCALE) {
+				if ((GetTimeZoneInformation(&tz_info) == TIME_ZONE_ID_INVALID) ||
+					((tzstr = wchar_to_utf8(tz_info.StandardName)) == NULL)) {
+					uprintf("WARNING: Could not retrieve current timezone: %s", WindowsErrorString());
+				} else {
+					fprintf(fd, "      <TimeZone>%s</TimeZone>\n", tzstr);
+					free(tzstr);
+				}
+			}
 			if (flags & UNATTEND_SET_USER) {
 				for (i = 0; (i < ARRAYSIZE(unallowed_account_names)) && (stricmp(unattend_username, unallowed_account_names[i]) != 0); i++);
 				if (i < ARRAYSIZE(unallowed_account_names)) {
@@ -201,10 +211,6 @@ char* CreateUnattendXml(int arch, int flags)
 				ReadRegistryKeyStr(REGKEY_HKCU, "Keyboard Layout\\Preload\\1"));
 			fprintf(fd, "      <SystemLocale>%s</SystemLocale>\n", ToLocaleName(GetSystemDefaultLCID()));
 			fprintf(fd, "      <UserLocale>%s</UserLocale>\n", ToLocaleName(GetUserDefaultLCID()));
-			if (GetTimeZoneInformation(&tz_info) == TIME_ZONE_ID_INVALID)
-				uprintf("WARNING: Could not retrieve current timezone: %s", WindowsErrorString());
-			else
-				fprintf(fd, "      <TimeZone>%S</TimeZone>\n", tz_info.StandardName);
 			fprintf(fd, "      <UILanguage>%s</UILanguage>\n", ToLocaleName(GetUserDefaultUILanguage()));
 			fprintf(fd, "      <UILanguageFallback>%s</UILanguageFallback>\n",
 				// NB: Officially, this is a REG_MULTI_SZ string
@@ -899,7 +905,8 @@ BOOL ApplyWindowsCustomization(char drive_letter, int flags)
 			// If we have a windowsPE section, copy the answer files to the root of boot.wim as
 			// Autounattend.xml. This also results in that file being automatically copied over
 			// to %WINDIR%\Panther\unattend.xml for later passes processing.
-			assert(mount_path != NULL);
+			if_not_assert(mount_path != NULL)
+				goto out;
 			static_sprintf(path, "%s\\Autounattend.xml", mount_path);
 			if (!CopyFileU(unattend_xml_path, path, TRUE)) {
 				uprintf("Could not create boot.wim 'Autounattend.xml': %s", WindowsErrorString());
